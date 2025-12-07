@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Visualizer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            text-align: center;
+        }
+
+        h1 {
+            color: white;
+            margin-bottom: 40px;
+            font-size: 2.5rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .upload-section {
+            margin-bottom: 40px;
+        }
+
+        .upload-btn {
+            background: white;
+            color: #667eea;
+            padding: 15px 40px;
+            border: none;
+            border-radius: 50px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+
+        .upload-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+        }
+
+        .upload-btn:active {
+            transform: translateY(0);
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .canvas-container {
+            position: relative;
+            display: inline-block;
+        }
+
+        canvas {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+
+        .controls {
+            margin-top: 30px;
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .control-btn {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 12px 30px;
+            border: 2px solid white;
+            border-radius: 25px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .control-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .control-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .file-info {
+            color: white;
+            margin-top: 20px;
+            font-size: 1rem;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Audio Visualizer</h1>
+        
+        <div class="upload-section">
+            <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
+                Upload Audio/Video
+            </button>
+            <input type="file" id="fileInput" accept="audio/*,video/*">
+        </div>
+
+        <div class="canvas-container">
+            <canvas id="visualizer" width="400" height="400"></canvas>
+        </div>
+
+        <div class="controls">
+            <button class="control-btn" id="playPauseBtn" disabled>Play</button>
+        </div>
+
+        <div class="file-info" id="fileInfo"></div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('visualizer');
+        const ctx = canvas.getContext('2d');
+        const fileInput = document.getElementById('fileInput');
+        const playPauseBtn = document.getElementById('playPauseBtn');
+        const fileInfo = document.getElementById('fileInfo');
+
+        let audioContext;
+        let analyser;
+        let dataArray;
+        let bufferLength;
+        let audioElement;
+        let source;
+        let animationId;
+        let isPlaying = false;
+
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const baseRadius = 120;
+
+        fileInput.addEventListener('change', handleFileSelect);
+        playPauseBtn.addEventListener('click', togglePlayPause);
+
+        function handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Clean up previous audio
+            if (audioElement) {
+                audioElement.pause();
+                audioElement.src = '';
+            }
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+            if (source) {
+                source.disconnect();
+            }
+
+            // Create audio element
+            audioElement = new Audio();
+            audioElement.src = URL.createObjectURL(file);
+            
+            // Initialize Web Audio API
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+            bufferLength = analyser.frequencyBinCount;
+            dataArray = new Uint8Array(bufferLength);
+
+            source = audioContext.createMediaElementSource(audioElement);
+            source.connect(analyser);
+            analyser.connect(audioContext.destination);
+
+            // Update UI
+            fileInfo.textContent = `Loaded: ${file.name}`;
+            playPauseBtn.disabled = false;
+            playPauseBtn.textContent = 'Play';
+            isPlaying = false;
+
+            // Start visualization
+            visualize();
+        }
+
+        function togglePlayPause() {
+            if (!audioElement) return;
+
+            if (isPlaying) {
+                audioElement.pause();
+                playPauseBtn.textContent = 'Play';
+            } else {
+                audioElement.play();
+                playPauseBtn.textContent = 'Pause';
+                if (audioContext.state === 'suspended') {
+                    audioContext.resume();
+                }
+            }
+            isPlaying = !isPlaying;
+        }
+
+        function visualize() {
+            animationId = requestAnimationFrame(visualize);
+
+            analyser.getByteFrequencyData(dataArray);
+
+            // Calculate average amplitude for vibration effect
+            let sum = 0;
+            for (let i = 0; i < bufferLength; i++) {
+                sum += dataArray[i];
+            }
+            const average = sum / bufferLength;
+            const vibrationScale = 1 + (average / 255) * 0.3;
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw multiple circles for glow effect
+            for (let glow = 3; glow >= 0; glow--) {
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, baseRadius * vibrationScale + glow * 5, 0, 2 * Math.PI);
+                ctx.strokeStyle = `rgba(255, 255, 255, ${0.1 - glow * 0.02})`;
+                ctx.lineWidth = 20 + glow * 5;
+                ctx.stroke();
+            }
+
+            // Draw main circle with audio visualization
+            const barWidth = (2 * Math.PI) / bufferLength;
+            
+            for (let i = 0; i < bufferLength; i++) {
+                const barHeight = (dataArray[i] / 255) * 60;
+                const angle = i * barWidth;
+                
+                // Calculate positions for outer glow
+                const innerRadius = baseRadius * vibrationScale;
+                const outerRadius = innerRadius + barHeight;
+                
+                const x1 = centerX + Math.cos(angle) * innerRadius;
+                const y1 = centerY + Math.sin(angle) * innerRadius;
+                const x2 = centerX + Math.cos(angle) * outerRadius;
+                const y2 = centerY + Math.sin(angle) * outerRadius;
+
+                // Create gradient for bars
+                const gradient = ctx.createLinearGradient(x1, y1, x2, y2);
+                gradient.addColorStop(0, 'rgba(255, 255, 255, 0.8)');
+                gradient.addColorStop(1, `rgba(102, 126, 234, ${dataArray[i] / 255})`);
+
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+                ctx.strokeStyle = gradient;
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            }
+
+            // Draw inner hollow circle
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, baseRadius * vibrationScale, 0, 2 * Math.PI);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.lineWidth = 4;
+            ctx.stroke();
+        }
+
+        // Initial draw
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, baseRadius, 0, 2 * Math.PI);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+    </script>
+</body>
+</html>
